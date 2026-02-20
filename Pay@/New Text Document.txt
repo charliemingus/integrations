@@ -1,0 +1,109 @@
+It's only a pleasure - We're looking forward to expand Unplugg's payment offering through the real-time Online Issuer Interface integration, 
+as well as the DigiAPI integration, and will provide support and clarity to your team where needed.
+
+I've broken up the integration into two parts, starting with the Online Issuer Interface integration, and ending on DigiAPI.
+
+Step 1: Online Issuer Interface Integration
+It is recommended to start with the Online Issuer Interface Integration as this then provides Pay@ with the interface on Unplugg's 
+side send authorizations and payment status updates to when initiating a transaction through DigiAPI.
+
+Unplugg will provide Pay@ with a public facing base endpoint, that's secured with an API Key, Basic Authentication, 
+or OAuth (with Client Secret / Client JWT).
+This endpoint will support the five paths specified in the Pay@ documentation, the request data received and then 
+responding accordingly to Pay@ so that a transaction can be facilitated end-to-end.
+
+Just as an example of a Base Endpoint - https://unplugg.co.za/payat/v1 - which Pay@ will append the relevant request path to, with the relevant request data, which Unplugg needs to respond to, in accordance to the Pay@ documentation / specifications.
+
+The following files are attached to review for this part of the integration:
+payat-issuer-interface-billpay-v3.0.4.yaml
+Contains all the API's, that can be opened on https://editor.swagger.io or imported into Postman
+billpay-issuer-upload-file-v3.pdf
+Specifications for the CSV formatted reconciliation file which replaces the old UPLOAD file
+Example file: EXTRACT-BILLPAY-11029-20230912.csv
+payat-issuer-transaction-extract-v1.yml
+Specifications for the JSON formatted reconciliation file which replaces the old UPLOAD file
+Example file: EXTRACT-BILLPAY-11402-20230831.json
+
+Just to note, Pay@ has a response time limit of 30 seconds per request, so I am including information on how to cater for these scenarios below, along with the summary of the API's that I took you and the team through.
+
+The five paths are:
+/account/enquiry
+The Pay@ request containing the prefixed account number that needs to be validated against your system.
+If the account is valid, Unplugg will return a HTTP 200 response, with the amount owed (in cents), the customers' information, the institution being paid and the payment rules.
+If the account is not valid, or there's any reason why the customer is not allowed to enquire / pay their account, a HTTP 422 response is expected, with the institution (issuer) details, a response code (from Pay@'s list of supported response codes like ACCOUNT_LOCKED / INVALID_ACCOUNT_NUMBER), and response text (free text where you can elaborate why you are declining the enquiry).
+Should Pay@ not receive a response in 30 seconds (or should any network interruption or unexpected error occur), the enquiry will be regarded as a timeout but since this request is purely information (no financial implication), the transaction would end here, and the customer would need to retry the transaction at a different payment network or at a later time.
+/transaction/authorization
+The Pay@ request containing the prefixed account number with the amount (in cents) which the customer would like to pay against the account, along with a network transaction identifier (assigned by the payment network) and a transaction identifier (assigned by Pay@).
+If the account is valid, and the amount specified aligns with your business / payment rules, Unplugg will return a HTTP 200 response, with the customers' information, the institution being paid and a unique issuer transaction identifier.
+If the account is not valid, or there's any reason why the customer is not allowed to pay their account, a HTTP 422 response is expected, with the institution (issuer) details, a response code (from Pay@'s list of supported response codes like ACCOUNT_LOCKED / INVALID_ACCOUNT_NUMBER), and response text (free text where you can elaborate why you are declining the enquiry).
+Should Pay@ not receive a response in 30 seconds (or should any network interruption or unexpected error occur), the authorization will be regarded as a timeout and a /transaction/void request will follow (without the issuerTransactionId from your response as it was not received by Pay@) to ensure that the transaction is not left open on your system indefinitely.
+Should the information on the void reference a transaction that's not present on your system, it means that the timeout occured before the request reached Unplugg.
+In this case, the void should still be responded to with a HTTP 200 as an acknowledgement.
+/transaction/completion
+The Pay@ request containing the prefixed account number, the network transaction identifier / transaction identifier / issuer transaction identifier (corresponding to the authorization), as well as a tenders array that can contain one or more tender object, that indicates that payment has been made successfully and serves as a guarantee that Unplugg will receive the funds in settlement from Pay@.
+Where more than one tender is present, the amount of each object should be summed together to get the final payment amount.
+As a prior authorization was performed, we only expect a HTTP 200 from Unplugg to acknowledge the payment confirmation.
+Any other errors will result in Pay@ retrying the request until an approved response is received (until midnight of the day that the transaction took place on)
+This transaction will be included on the reconciliation file so that Unplugg can verify that the transactions processed for the day aligns with what Pay@ has on record, and if there are any discrepancies, to either update from the recon file, or to log a query with Pay@ support.
+Should Pay@ not receive a response in 30 seconds (or should any network interruption or unexpected error occur), the completion will be regarded as a timeout and Pay@ will repeat the request, until an approved response is received, up to midnight of the day that the transaction took place on.
+The transaction will be included on the reconciliation file with the paid status.
+/transaction/void
+The Pay@ request containing the prefixed account number, the network transaction identifier / transaction identifier / issuer transaction identifier (corresponding to the authorization), indicating that the customer is not proceeding with payment, and the transaction should be marked as voided (cancelled).
+As a prior authorization was performed, we only expect a HTTP 200 from Unplugg to acknowledge the payment void.
+Should Pay@ not receive a response in 30 seconds (or should any network interruption or unexpected error occur), the void will be regarded as a timeout and Pay@ will repeat the request, until an approved response is received, up to midnight of the day that the transaction took place on.
+The transaction will be included on the reconciliation file with the voided (cancelled) status.
+/echoTest
+A periodic health check request in which Pay@ provides a messageId, echoData and the transmissionDateTime.
+If Unplugg's system is operational, we expect a HTTP 200 with the echoData and transmissionDateTime.
+If the system is experiencing errors and the code returned is not HTTP 200, our support can get in touch with you to notify you of a processing issue.
+
+Testing the Issuer Interface:
+https://payat.io:9443/issuer-certification-simulator/billpay/v3 is the online certification simulator that we make available that tests the implemented API's in various transactional scenarios.
+Start by populating your base endpoint, prefix (you can use 11157 which belongs to All Diamond Risk Solutions), authentication type and authentication credentials.
+The first test is an echoTest, which if passed, unlocks the rest of the test cases lower on the page.
+Unplugg can skip test cases 3, 14, 15, 16, and 17.
+Unplugg can skip test cases 3, 14, 15, 16, and 17.
+
+As mentioned, once you're happy with the results, you can download and send our team the certification summary report (at the very bottom of the simulator page), along with the endpoint, authentication type and authentication credentials for QA.
+
+From here, if QA testing is a success, we can start configuring the Pay@ Production environment and agree on a date that we'll switch All Diamond Risk Solutions from offline (file based) to the online (real time).
+
+
+Step 2: DigiAPI
+The main reason for doing DigiAPI after the Issuer Interface is due to the Issuer Interface being a critical component in the DigiAPI integration.
+Whenever a customer interacts with a payment link (method), performs a tokenization (for subscription-based billing), or your service processes a recurring payment against an existing card token, an authorization will always be performed first to your Issuer Interface to give your system the opportunity to validate the account number and the amount, so you can approve / decline a payment based on your business and payment rules, before the customer is allowed to proceed. 
+
+Every authorization will then be followed with either a completion or void to indicate the payment outcome, and additionally you'll receive a callback notification on your webhook URL (specified in the documentation on the /payment/notify API).
+
+I have attached the following file to be reviewed for this part of the integration:
+Pay@ Digi-API v1.2.yaml
+Contains the API (/payment/initiate) for retrieving payment links / methods from Pay@ that can be presented in your own environment (like an application / online-self-service portal on either mobile or desktop) as well as the API's for tokenizing a customers' card (/token/paymentlink) and performing recurring payment collections (/token/payment) against it.
+/payment/initiate requires Unplugg to provide the account number, the amount (to pay), a client reference (unique per customer), and three handback / redirect URL's (success, failed and cancelled) that then returns payment links in three different categories:
+appPaymentLinks
+These are links that should be shown to customers accessing your payments page from mobile, which invoke / open the corresponding payment application on their phone (or prompts them to download it if it's not installed)
+These links do not support handbacks / redirects - so when initiating a payment, you would either need to use the Issuer Interface to see when a transaction is being processed so you can refresh the screen on your app / website to reflect the payment outcome to customer (or alternatively, use the callback notification that Pay@ provides to perform the same action on the customers' view that they'll navigate back to after completing payment on a mobile payment application like Masterpass Scan to Pay, SnapScan or Zapper).
+webPaymentLinks
+These are links that should be shown to customers accessing your payments page from mobile or desktop.
+The links will redirect the customer to an external webpage (hosted by the payment provider selected) so they can capture their payment information before being handed back to the merchant site (on the relevant success / failed / cancelled URL)
+qrCodePayment
+This URL should be embedded in a QR code image and displayed to customers accessing your payments page from desktop, as they would be required to scan the QR code with a mobile device, with a supported payment application (like SnapScan / Zapper).
+This link does not support handbacks / redirects - so when initiating a payment, you would either need to use the Issuer Interface to see when a transaction is being processed so you can refresh the screen on your app / website to reflect the payment outcome to customer (or alternatively, use the callback notification that Pay@ provides to perform the same action on the customers' view (informing them of their payment status on the page they initiated the transaction from).
+/token/paymentlink is used to initiate a tokenization and to collect initial payment - or by providing an existing card token on the request, allows a once-off card payment where the customers' details are prepopulated, only requiring them to do a 3DS challenge.
+This request requires Unplugg to specify the account number, amount (to pay), a client reference and a customer identifier (unique per customer), a callback URL (additional to the /payment/notify), a handback URL and optionally a card token (if already tokenized, for a once-off payment).
+The response will contain a link that the customer is redirected to - giving them the ability to capture their card details (if no card token was specified) and perform 3DS, before being handed back to the handback URL specified on the Unplugg request, along with a callback notification and communicating the payment outcome to the Issuer Interface.
+/token/payment is used to initiate a recurring payment from a customer with an existing card token (already tokenized) - and would require Unplugg to specify the account number, amount (to pay), a customer identifier, a callback URL and a unique merchantTransactionId, along with the card token.
+As the customer is not present for a recurring payment, no handback URL is required.
+All communication will be sent to the Issuer Interface, the callback URL specified, as well as the /payment/notify webhook.
+
+Below you'll find the sandbox credentials (for QA) for DigiAPI that would allow you to start making requests - though, as mentioned in the email earlier, this will require the issuer interface to operational before the DigiAPI call will be fully functional.
+
+Token URL: https://payat.io:9443/oauth/v1/token
+Client ID: QA_DigiAPI_Unplugg
+Client Secret: pG^yur3V1kzGT#1vOrMgJ2P3
+Scope: f07aa83c-e6b9-11ea-adc1-0242ac120002
+Grant Type: Client Credentials
+Base Transactional URL: https://payat.io:9443/digiapi/v1
+
+What we'll require from you for the DigiAPI integration would be:
+Your hostnames / URL's that will be used for the redirect
+Your callback URL for the /payment/notify webhook notifications (secured with API Key, Basic Auth, or OAuth with Client Secret / Client JWT)
